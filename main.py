@@ -114,12 +114,6 @@ def send_single_email(to_email, to_name, to_city, to_spec):
 
     subject = f"دعوة رسمية للأستاذ {to_name} • اكتشف منظومة lejurist لأتمتة تقارير الخبرة القضائية"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = formataddr((CONFIG["sender_name"], CONFIG["sender_email"]))
-    msg["To"] = formataddr((to_name, to_email))
-    msg["Reply-To"] = CONFIG["sender_email"]
-
     plain_text = f"""السلام عليكم ورحمة الله وبركاته،
 الأستاذ الخبير {to_name} المحترم ({to_city})،
 
@@ -131,16 +125,28 @@ https://lejurist.com
 مع أطيب التحيات،
 منصة lejurist • المغرب
 """
-    msg.attach(MIMEText(plain_text, "plain", "utf-8"))
-    msg.attach(MIMEText(html_template, "html", "utf-8"))
 
-    server = smtplib.SMTP(CONFIG["smtp_server"], CONFIG["smtp_port"], timeout=25)
-    server.ehlo()
-    server.starttls()
-    server.ehlo()
-    server.login(CONFIG["sender_email"], CONFIG["app_password"])
-    server.sendmail(CONFIG["sender_email"], [to_email], msg.as_string())
-    server.quit()
+    payload = {
+        "secret": "lejurist_mailer_relay_secret_token_2026",
+        "to_email": to_email,
+        "to_name": to_name,
+        "subject": subject,
+        "html": html_template,
+        "plain": plain_text
+    }
+    req = urllib.request.Request(
+        "https://lejurist.com/api/internal/relay-send-mail",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Relay-Secret": "lejurist_mailer_relay_secret_token_2026",
+            "User-Agent": "LeJurist-Mailer-Bot/1.0"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+        if res.get("status") != "ok":
+            raise Exception(res.get("message", "Relay error"))
     return True
 
 # ----------------- BACKGROUND WORKER -----------------
