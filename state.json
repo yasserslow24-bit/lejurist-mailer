@@ -1,0 +1,12 @@
+{
+  "date": "2026-11-21",
+  "sent_today": 0,
+  "total_sent_all_time": 1,
+  "sent_emails": {
+    "test_dedup_check@example.com": {
+      "sent_at": "2026-11-20 23:30:45",
+      "name": "فحص التكرار"
+    }
+  },
+  "failed_emails": {}
+}

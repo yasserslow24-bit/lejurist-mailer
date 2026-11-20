@@ -59,6 +59,7 @@ def load_state():
         "sent_emails": {},
         "failed_emails": {}
     }
+    state = default_state
     if os.path.exists(STATE_PATH):
         try:
             with open(STATE_PATH, "r", encoding="utf-8") as f:
@@ -66,11 +67,28 @@ def load_state():
                 if state.get("date") != today_str:
                     state["date"] = today_str
                     state["sent_today"] = 0
-                return state
         except Exception:
-            pass
-    save_state(default_state)
-    return default_state
+            state = default_state
+
+    # Always sync with persistent SQLite database on server
+    try:
+        req = urllib.request.Request(
+            "https://lejurist.com/api/internal/relay-get-sent-emails?secret=lejurist_mailer_relay_secret_token_2026",
+            headers={"X-Relay-Secret": "lejurist_mailer_relay_secret_token_2026", "User-Agent": "LeJurist-Sync/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("status") == "ok" and isinstance(data.get("sent_emails"), dict):
+                for em, info in data["sent_emails"].items():
+                    em_lower = em.strip().lower()
+                    if em_lower not in state["sent_emails"]:
+                        state["sent_emails"][em_lower] = info
+                state["total_sent_all_time"] = len(state["sent_emails"])
+    except Exception as e:
+        pass
+
+    save_state(state)
+    return state
 
 def save_state(state):
     try:
@@ -145,9 +163,11 @@ https://lejurist.com
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         res = json.loads(resp.read().decode("utf-8"))
+        if res.get("status") == "already_sent":
+            return "already_sent"
         if res.get("status") != "ok":
             raise Exception(res.get("message", "Relay error"))
-    return True
+    return "ok"
 
 # ----------------- BACKGROUND WORKER -----------------
 def mailer_loop():
@@ -185,7 +205,7 @@ def mailer_loop():
 
             log_event(f"📤 جاري الإرسال إلى: {target['name']} ({target['email']}) - {target['city']}...")
             try:
-                send_single_email(target["email"], target["name"], target["city"], target["specialty"])
+                res = send_single_email(target["email"], target["name"], target["city"], target["specialty"])
                 state["sent_today"] += 1
                 state["total_sent_all_time"] += 1
                 state["sent_emails"][target["email"]] = {
@@ -196,6 +216,12 @@ def mailer_loop():
                 }
                 save_state(state)
                 runtime["last_sent"] = target
+
+                if res == "already_sent":
+                    log_event(f"ℹ️ البريد {target['email']} تم إرساله مسبقاً ومسجل بقاعدة البيانات. تم تخطيه.")
+                    time.sleep(2)
+                    continue
+
                 log_event(f"✅ تم الإرسال بنجاح! [اليوم: {state['sent_today']}/{CONFIG['daily_limit']} | الإجمالي: {state['total_sent_all_time']}]")
             except Exception as e:
                 log_event(f"❌ خطأ أثناء الإرسال إلى {target['email']}: {e}")
@@ -208,6 +234,9 @@ def mailer_loop():
                 log_event(f"🎉 تم إكمال الحصة اليومية بالكامل ({CONFIG['daily_limit']} إيميل). في أمان لحماية الدومين.")
                 time.sleep(300)
                 continue
+
+            # Update next recipient for dashboard
+            runtime["next_recipient"] = pending[1] if len(pending) > 1 else None
 
             # Random interval: 12 to 16 minutes
             delay_minutes = random.uniform(CONFIG["min_delay_minutes"], CONFIG["max_delay_minutes"])
